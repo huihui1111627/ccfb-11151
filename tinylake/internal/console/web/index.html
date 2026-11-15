@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TinyLake 管理控制台</title>
+<style>
+  :root {
+    --bg:#0f1420; --panel:#171e2e; --panel2:#1e2740; --line:#2a3550;
+    --text:#e6ebf5; --muted:#8b97b0; --accent:#5b8cff; --green:#3ecf8e;
+    --amber:#f5b14c; --red:#f06c75; --purple:#a78bfa;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+         background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:16px; padding:14px 24px; background:var(--panel); border-bottom:1px solid var(--line); }
+  header h1 { font-size:18px; margin:0; }
+  header .badge { font-size:12px; color:var(--muted); border:1px solid var(--line); padding:2px 8px; border-radius:10px; }
+  .wrap { display:flex; min-height:calc(100vh - 56px); }
+  nav { width:210px; background:var(--panel); border-right:1px solid var(--line); padding:12px 0; flex-shrink:0; }
+  nav button { display:block; width:100%; text-align:left; background:none; border:none; color:var(--muted);
+               padding:11px 22px; font-size:14px; cursor:pointer; border-left:3px solid transparent; }
+  nav button:hover { color:var(--text); background:var(--panel2); }
+  nav button.active { color:var(--text); border-left-color:var(--accent); background:var(--panel2); }
+  main { flex:1; padding:24px; overflow:auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; margin-bottom:18px; }
+  .card h2 { margin:0 0 14px; font-size:15px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr:hover td { background:var(--panel2); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; }
+  .metric { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .metric .k { color:var(--muted); font-size:12px; }
+  .metric .v { font-size:24px; font-weight:700; margin-top:4px; font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:2px 9px; border-radius:11px; font-size:12px; font-weight:600; }
+  .pill.append{background:rgba(91,140,255,.18);color:#9db8ff;}
+  .pill.compact{background:rgba(62,207,142,.18);color:var(--green);}
+  .pill.rewrite{background:rgba(245,177,76,.18);color:var(--amber);}
+  .pill.delete{background:rgba(240,108,117,.18);color:var(--red);}
+  button.act { background:var(--accent); color:#fff; border:none; padding:8px 16px; border-radius:7px; cursor:pointer; font-size:13px; }
+  button.act:hover { filter:brightness(1.1); }
+  button.act.ghost { background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  .toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:14px; }
+  input,select { background:var(--panel2); border:1px solid var(--line); color:var(--text); border-radius:7px; padding:8px 10px; font-size:13px; }
+  .muted { color:var(--muted); }
+  .bar { height:8px; border-radius:4px; background:var(--accent); }
+  .bar.outer { background:var(--line); width:140px; display:inline-block; vertical-align:middle; }
+  .toast { position:fixed; right:24px; bottom:24px; background:var(--panel2); border:1px solid var(--line);
+           padding:12px 18px; border-radius:9px; opacity:0; transform:translateY(8px); transition:.25s; max-width:380px; }
+  .toast.show { opacity:1; transform:none; }
+  .toast.err { border-color:var(--red); }
+  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  .hidden { display:none; }
+  .timeline { position:relative; padding-left:6px; }
+  .tl-row { display:grid; grid-template-columns:64px 110px 1fr; gap:10px; align-items:center; padding:6px 0; border-bottom:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🪶 TinyLake</h1>
+  <span class="badge">轻量表格式层 · 对象存储元数据管理</span>
+  <span style="flex:1"></span>
+  <button class="act ghost" onclick="loadAll()">刷新</button>
+</header>
+<div class="wrap">
+  <nav>
+    <button data-tab="tables" class="active" onclick="switchTab('tables')">📋 表列表</button>
+    <button data-tab="history" onclick="switchTab('history')">🕓 提交历史</button>
+    <button data-tab="files" onclick="switchTab('files')">🗂 文件分布</button>
+    <button data-tab="compaction" onclick="switchTab('compaction')">🔧 合并任务</button>
+    <button data-tab="conflicts" onclick="switchTab('conflicts')">⚔️ 并发冲突</button>
+  </nav>
+  <main>
+    <!-- Tables -->
+    <section id="tab-tables">
+      <div class="card">
+        <h2>创建表</h2>
+        <div class="toolbar">
+          <input id="new-name" placeholder="表名，如 events" style="width:200px">
+          <input id="new-cols" placeholder="分区列，逗号分隔，如 dt" style="width:260px">
+          <button class="act" onclick="createTable()">创建</button>
+          <span class="muted">分区演进示例：先 dt，再用「合并任务」页加 dt,hour</span>
+        </div>
+      </div>
+      <div class="card">
+        <h2>表总览</h2>
+        <div id="tables-grid" class="grid"></div>
+      </div>
+      <div class="card">
+        <table id="tables-table">
+          <thead><tr><th>表</th><th class="num">快照数</th><th class="num">文件数</th><th class="num">行数</th>
+            <th class="num">总字节</th><th class="num">平均文件</th><th class="num">全表扫描文件</th>
+            <th class="num">删除标记</th><th>当前分区</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- History -->
+    <section id="tab-history" class="hidden">
+      <div class="card">
+        <h2>提交历史（快照链，新→旧）</h2>
+        <div class="toolbar">
+          <select id="history-table" onchange="loadHistory()"></select>
+        </div>
+        <table id="history-table-el">
+          <thead><tr><th class="num">Seq</th><th>类型</th><th>Writer</th><th>CommitID</th>
+            <th class="num">+文件</th><th class="num">-文件</th><th>说明</th><th>父快照</th><th>时间</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Files -->
+    <section id="tab-files" class="hidden">
+      <div class="card">
+        <h2>文件与分区分布</h2>
+        <div class="toolbar">
+          <select id="files-table" onchange="loadFiles()"></select>
+        </div>
+        <div id="part-grid" class="grid" style="margin-bottom:16px"></div>
+        <table>
+          <thead><tr><th>路径</th><th>分区</th><th class="num">字节</th><th class="num">行数</th>
+            <th class="num">MinKey</th><th class="num">MaxKey</th></tr></thead>
+          <tbody id="files-tbody"></tbody>
+        </table>
+        <p class="muted" id="files-note"></p>
+      </div>
+    </section>
+
+    <!-- Compaction / maintenance -->
+    <section id="tab-compaction" class="hidden">
+      <div class="card">
+        <h2>维护任务（后台安全执行，读写不阻塞）</h2>
+        <div class="toolbar">
+          <select id="maint-table"></select>
+        </div>
+        <div class="toolbar">
+          <label class="muted">目标字节 <input id="target-size" type="number" value="4096" style="width:110px"></label>
+          <label class="muted">最少输入文件 <input id="min-input" type="number" value="2" style="width:90px"></label>
+          <button class="act" onclick="runCompact()">执行小文件合并</button>
+          <button class="act ghost" onclick="runRewrite()">物理重写（应用删除标记）</button>
+          <button class="act ghost" onclick="runExpire()">清理过期快照/孤儿文件</button>
+        </div>
+        <div class="toolbar">
+          <input id="spec-cols" placeholder="新分区列，如 dt,hour" style="width:220px">
+          <button class="act ghost" onclick="runAddSpec()">演进分区规格</button>
+        </div>
+        <pre id="maint-out" class="mono" style="background:var(--panel2);padding:14px;border-radius:8px;overflow:auto;min-height:120px"></pre>
+      </div>
+      <div class="card">
+        <h2>合并前后扫描文件数对比</h2>
+        <div id="compare" class="grid"></div>
+      </div>
+    </section>
+
+    <!-- Conflicts -->
+    <section id="tab-conflicts" class="hidden">
+      <div class="card">
+        <h2>并发与冲突（乐观锁 CAS 观测）</h2>
+        <div class="toolbar"><select id="conf-table" onchange="loadConflicts()"></select></div>
+        <div id="conf-metrics" class="grid" style="margin-bottom:16px"></div>
+        <table>
+          <thead><tr><th>Writer</th><th class="num">提交快照数</th></tr></thead>
+          <tbody id="conf-tbody"></tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h2>快照派生关系（同一父快照的分支即一次 CAS 争用后自动合并）</h2>
+        <div id="timeline" class="timeline"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let TABLES = [], CURRENT = null;
+
+async function api(path, opts={}) {
+  const res = await fetch(path, {headers:{'Content-Type':'application/json'}, ...opts});
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) throw new Error(data.error || ('HTTP '+res.status));
+  return data;
+}
+function toast(msg, isErr=false) {
+  const t = $('toast'); t.textContent = msg; t.className = 'toast show' + (isErr?' err':'');
+  setTimeout(()=>t.className='toast', 3500);
+}
+const fmtBytes = (n) => n>=1048576 ? (n/1024/1024).toFixed(2)+' MB' : n>=1024 ? (n/1024).toFixed(1)+' KB' : n+' B';
+const fmtNum = (n) => (n??0).toLocaleString();
+const ago = (ms) => ms<60000 ? Math.round(ms/1000)+'s 前' : Math.round(ms/60000)+'m 前';
+
+function switchTab(name) {
+  document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active', b.dataset.tab===name));
+  document.querySelectorAll('main section').forEach(s=>s.classList.add('hidden'));
+  $('tab-'+name).classList.remove('hidden');
+  if (name==='history') loadHistory();
+  if (name==='files') loadFiles();
+  if (name==='compaction') loadCompactionView();
+  if (name==='conflicts') loadConflicts();
+}
+
+async function loadAll() {
+  TABLES = await api('/api/tables');
+  CURRENT = TABLES[0]?.name || null;
+  fillTableSelects();
+  renderTables();
+  if (CURRENT) { loadHistory(); loadFiles(); loadConflicts(); loadCompactionView(); }
+}
+
+function fillTableSelects() {
+  for (const id of ['history-table','files-table','maint-table','conf-table']) {
+    const sel = $(id); const prev = sel.value;
+    sel.innerHTML = TABLES.map(t=>`<option ${t.name===prev?'selected':''}>${t.name}</option>`).join('');
+    if (!prev && CURRENT) sel.value = CURRENT;
+  }
+}
+
+function metric(k,v) { return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`; }
+
+function renderTables() {
+  $('tables-grid').innerHTML = TABLES.map(t=>metric(t.name, fmtNum(t.stat.file_count)+' 文件')).join('') ||
+    '<span class="muted">还没有表</span>';
+  $('tables-table').querySelector('tbody').innerHTML = TABLES.map(t=>`
+    <tr><td><a href="#" onclick="selectTable('${t.name}');return false">${t.name}</a></td>
+      <td class="num">${fmtNum(t.stat.snapshot_count)}</td>
+      <td class="num">${fmtNum(t.stat.file_count)}</td>
+      <td class="num">${fmtNum(t.stat.total_rows)}</td>
+      <td class="num">${fmtBytes(t.stat.total_bytes)}</td>
+      <td class="num">${fmtBytes(t.stat.avg_file_bytes)}</td>
+      <td class="num">${fmtNum(t.stat.full_scan_files)}</td>
+      <td class="num">${fmtNum(t.stat.delete_markers)}</td>
+      <td class="mono">${t.current_spec.columns.join(',')||'-'}</td></tr>`).join('');
+}
+function selectTable(name) { CURRENT=name; switchTab('files'); }
+
+async function createTable() {
+  const name = $('new-name').value.trim(), cols = $('new-cols').value.split(',').map(s=>s.trim()).filter(Boolean);
+  if (!name) return toast('请输入表名', true);
+  try { await api('/api/tables',{method:'POST',body:JSON.stringify({name, partition_cols:cols})});
+    toast('表 '+name+' 已创建'); $('new-name').value=''; await loadAll(); }
+  catch(e){ toast(e.message,true); }
+}
+
+async function loadHistory() {
+  const name = $('history-table').value || CURRENT; if (!name) return;
+  const rows = await api(`/api/tables/${name}/history`);
+  $('history-table-el').querySelector('tbody').innerHTML = rows.map(r=>`
+    <tr><td class="num">${r.seq}</td>
+      <td><span class="pill ${r.op}">${r.op}</span></td>
+      <td class="mono">${r.writer_id}</td>
+      <td class="mono">${r.commit_id}</td>
+      <td class="num">${r.num_added}</td><td class="num">${r.num_removed}</td>
+      <td>${r.message||''}</td><td class="num">${r.parent_id||'-'}</td>
+      <td class="muted">${ago(r.age_ms)}</td></tr>`).join('');
+}
+
+async function loadFiles() {
+  const name = $('files-table').value || CURRENT; if (!name) return;
+  const data = await api(`/api/tables/${name}/files`);
+  const maxBytes = Math.max(1,...data.stats.partitions.map(p=>p.bytes));
+  $('part-grid').innerHTML = data.stats.partitions.map(p=>`
+    <div class="metric"><div class="k mono">${Object.entries(p.partition).map(([k,v])=>k+'='+v).join(' ')||'(无分区)'}</div>
+      <div class="v">${p.files}</div><div class="muted">${fmtNum(p.rows)} 行 · ${fmtBytes(p.bytes)}</div>
+      <div class="bar outer"><div class="bar" style="width:${Math.round(p.bytes/maxBytes*100)}%"></div></div></div>`).join('')
+    || '<span class="muted">无文件</span>';
+  $('files-tbody').innerHTML = data.files.map(f=>`
+    <tr><td class="mono">${f.path.split('/').pop()}</td>
+      <td class="mono">${Object.entries(f.partition).map(([k,v])=>k+'='+v).join(' ')||'-'}</td>
+      <td class="num">${fmtBytes(f.size)}</td><td class="num">${fmtNum(f.rows)}</td>
+      <td class="num">${f.min_key}</td><td class="num">${f.max_key}</td></tr>`).join('');
+  $('files-note').textContent = `全表扫描需打开 ${data.stats.full_scan_files} 个文件；删除标记 ${data.delete_markers.length} 个（读时过滤，尚未物理重写）`;
+}
+
+async function loadCompactionView() {
+  const name = $('maint-table').value || CURRENT; if (!name) return;
+  const stat = await api('/api/tables/'+name);
+  $('compare').innerHTML =
+    metric('当前文件数', fmtNum(stat.file_count)) +
+    metric('平均文件大小', fmtBytes(stat.avg_file_bytes)) +
+    metric('全表扫描文件数', fmtNum(stat.full_scan_files)) +
+    metric('分区数', fmtNum(stat.partitions.length));
+}
+async function runCompact() {
+  const name=$('maint-table').value;
+  const body = {target_size:+$('target-size').value, min_input_files:+$('min-input').value, max_input_files:50};
+  try { const r = await api(`/api/tables/${name}/compact`,{method:'POST',body:JSON.stringify(body)});
+    $('maint-out').textContent = '合并结果:\n'+JSON.stringify(r,null,2);
+    toast(r.ran ? `合并 ${r.files_in} → ${r.files_out} 文件` : '没有需要合并的小文件');
+    await loadAll(); } catch(e){ toast(e.message,true); }
+}
+async function runRewrite() {
+  const name=$('maint-table').value;
+  try { const r = await api(`/api/tables/${name}/rewrite`,{method:'POST',body:JSON.stringify({min_markers:1})});
+    $('maint-out').textContent = '重写结果:\n'+JSON.stringify(r,null,2); await loadAll(); }
+  catch(e){ toast(e.message,true); }
+}
+async function runExpire() {
+  const name=$('maint-table').value;
+  try { const r = await api(`/api/tables/${name}/expire`,{method:'POST',body:'{}'});
+    $('maint-out').textContent = '清理结果:\n'+JSON.stringify(r,null,2); await loadAll(); }
+  catch(e){ toast(e.message,true); }
+}
+async function runAddSpec() {
+  const name=$('maint-table').value; const columns=$('spec-cols').value.split(',').map(s=>s.trim()).filter(Boolean);
+  try { const r = await api(`/api/tables/${name}/spec`,{method:'POST',body:JSON.stringify({columns})});
+    $('maint-out').textContent='新分区规格 id='+r.spec_id+'（旧分区文件保留，按列重叠裁剪）'; await loadAll(); }
+  catch(e){ toast(e.message,true); }
+}
+
+async function loadConflicts() {
+  const name = $('conf-table').value || CURRENT; if (!name) return;
+  const d = await api(`/api/tables/${name}/conflicts`);
+  $('conf-metrics').innerHTML =
+    metric('快照总数', fmtNum(d.total_snapshots)) +
+    metric('不同写入方', fmtNum(d.distinct_writers)) +
+    metric('发生争用的父快照', fmtNum(d.contended_parents)) +
+    metric('重复CommitID', fmtNum(d.duplicate_commits));
+  $('conf-tbody').innerHTML = d.writers.map(w=>`<tr><td class="mono">${w.writer}</td><td class="num">${w.commits}</td></tr>`).join('');
+  $('timeline').innerHTML = d.snapshots.map(s=>`
+    <div class="tl-row"><span class="num mono">#${s.seq}</span>
+      <span class="pill ${s.op}">${s.op}</span>
+      <span class="mono">${s.writer_id} <span class="muted">← parent #${s.parent_id||0} · ${s.commit_id}</span></span></div>`).join('');
+}
+
+loadAll().catch(e=>toast(e.message,true));
+setInterval(loadAll, 5000);
+</script>
+</body>
+</html>
